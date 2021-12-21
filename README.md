@@ -19,7 +19,7 @@ Note:
 
 ## Steps
 
-1. Put `runalphafold.sh` and `foldsing.sh` in the same directory with all the fasta files. The `af2.pbs` is optional and is only necessary if you are running the job thourhg a PBS job manager;
+1. Place `runalphafold.sh` and `foldsing.sh` in the same directory with all the fasta files. The `af2.pbs` is optional and is only necessary if you are running the job through a PBS job manager;
 2. Run `./runalphafold.sh run` or `./runalphafold.sh rerun` from that directory, depending which mode you'd like to run:
     - `run`: process the sequences contained in all FASTA files in the current directory
     - `rerun`: when processing a large amount of sequences, there is a chance that a small number may fail. If that happens, use this rerun mode to find those sequences and process them.
