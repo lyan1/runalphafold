@@ -3,7 +3,7 @@ Wrapper script for running Alphafold on LSU HPC clusters
 
 # Purpose
 
-This script processes protein sequences (in fasta format) using the AlphaFold package developed by DeepMind. It will read the sequences from all fasta files located in the same directory, store each sequence in a separate fasta file, then process them with Alphafold (from within a Singularity container).
+This script batch-processes protein sequences (in fasta format) using the AlphaFold package developed by DeepMind. It will read the sequences from all fasta files located in the same directory, store each sequence in a separate fasta file, then process them with Alphafold (from within a Singularity container).
     
 # Files
 
