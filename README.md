@@ -24,13 +24,13 @@ Note:
 
 After the jobs finishes, there should be a `workspace` directory, in which you can find:
 
-  target_0001
-  target_0001.fasta
-  target_0002
-  target_0002.fasta
-  target_0003
-  target_0003.fasta
+    target_0001
+    target_0001.fasta
+    target_0002
+    target_0002.fasta
+    target_0003
+    target_0003.fasta
   ...
 
-where each of the target_*.fasta files contains one sequence and the directory with the same name the output files from AlphaFold.
+, where each of the target_*.fasta files contains one sequence and the directory with the same name the output files from AlphaFold.
 
