@@ -189,7 +189,7 @@ else
 fi
 
 nseq=$(cat input.lst | wc -l)
-nnode=$(cat hostfile | uniq | wc -l)
+nnode=$(cat $hostfile | uniq | wc -l)
 
 echo
 echo "Start processing $nseq sequences on $nnode nodes."
