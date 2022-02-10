@@ -16,7 +16,7 @@ MODEL=monomer
 DEVICE=$2
 OUTDIR=$3
 
-singularity exec --env CUDA_VISIBLE_DEVICES=$DEVICE -B $ALPHAFOLD_DATA_PATH:/data -B /project -B .:/etc --pwd /app/alphafold --nv $SIF python3 /app/alphafold/run_alphafold.py \
+singularity exec --env CUDA_VISIBLE_DEVICES=$DEVICE -B $ALPHAFOLD_DATA_PATH:/data -B /project -B /work -B .:/etc --pwd /app/alphafold --nv $SIF python3 /app/alphafold/run_alphafold.py \
     --fasta_paths=$FASTA \
     --output_dir=$OUTDIR \
     --model_preset=$MODEL \
