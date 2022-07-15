@@ -5,8 +5,8 @@
 #PBS -l nodes=2:ppn=36
 #PBS -q v100
 #PBS -j oe
-#PBS -N AF.multinode
+#PBS -N af2.mono.test
 
 cd $PBS_O_WORKDIR
 
-./runalphafold.sh run
+./runalphafold.sh --model monomer --mode run

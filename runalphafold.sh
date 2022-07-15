@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Version: 0.2
+# Version: 0.3
 # Author: Le Yan
 
 # To-do
 # 1. Adjust the number of GNU parallel jobs according to the number of devices per node.
 # 2. Add more command line options
-# 4. More sanity checks (e.g. availability of GPUs, reference data etc.)
+# 3. More sanity checks (e.g. availability of GPUs, reference data etc.)
 
 usage() {
   cat << HERE
@@ -24,10 +24,13 @@ usage() {
     GNU parallel must be in the PATH.
 
   Usage:
-    $0 [run|rerun] <options>
-    where
-      the "run" mode is to process the sequences contained in all FASTA files in the current directory, and
-      the "rerun" mode is to process any sequences that are not processed in the workspace.
+    $0 --model [monomer|multimer] --mode [[run|rerun] <options>
+    where the mandatory flags are:
+      --model
+        Users need to choose either the monomer or multimer model
+      -- mode
+        the "run" mode is to process the sequences contained in all FASTA files in the current directory, and
+        the "rerun" mode is to process any sequences that are not processed in the workspace.
 
   Options:
     -v: run in the verbose mode (for debugging)
@@ -57,15 +60,23 @@ then
   exit
 fi
 
+# Set initial valules.
+dryrun=0
+unset model
+unset mode
+
 # Process command line arguments.
 
 while [ "$#" -gt 0 ] ; do
 case "$1" in
-  run)
-        mode="run";
-        shift 1;;
-  rerun)
-        mode="rerun";
+  --model)
+        model=$2;
+        shift 2;;
+  --mode)
+        mode=$2;
+        shift 2;;
+  --dryrun)
+        dryrun=1;
         shift 1;;
   -v)
         verbose=1;
@@ -86,11 +97,15 @@ done
 
 # Perform the sanity checks.
 
-# Check if the mode is correctly specified.
-#if [ "$mode" != 'single' ] && [ "$mode" != 'multiple' ] && [ "$mode" != 'rerun' ] 
-#then
-#  quit_on_error "The mode should either single, multiple, or rerun."
-#fi
+if [ "$mode" != 'run' ] && [ "$mode" != 'rerun' ]
+then
+  quit_on_error "The mode must be specified as either 'run' or 'rerun'."
+fi
+
+if [ "$model" != 'monomer' ] && [ "$model" != 'multimer' ]
+then
+  quit_on_error "The model must be specified as either 'monomer' or 'multimer'."
+fi
 
 # Check if the foldsingle.sh script exists.
 if [[ ! -f "foldsingle.sh" ]]
@@ -104,49 +119,18 @@ then
   quit_on_error "GNU parallel could not be found!"
 fi
 
-# The run mode.
-
 if [ "$mode" == "run" ]
 then
 
   # Make sure the workspace is not already there.
-  if [ -d "workspace" ] 
+  if [ -d "workspace" ]
   then
     quit_on_error "We are in the run mode, but the workspace already exists. Rerun maybe?"
   fi
 
   mkdir workspace
 
-  # Merge all fasta files into one.
-  for file in `ls *.fasta` 
-  do
-    cat $file >> workspace/merged.fasta
-  done
-
-  nseq=$(grep '>' workspace/merged.fasta | wc -l)
-  if [ $nseq -gt 9999 ] 
-  then 
-    quit_on_error "Found more than 9,999 sequences. Please consider break them up into multiple jobs."
-  fi
-
-  # Copy the foldsingle script to the workspace.
-  cd workspace
-  BASEDIR=$(pwd)
-  cp ../foldsingle.sh .
-
-  # Split the fasta files - up to 10,000 sequences.
-  awk '/^>/ {if(x>0) close(outname); x++; outname=sprintf("target_%.4d.fasta",x); print > outname;next;} {if(x>0) print >> outname;}' merged.fasta
-  rm merged.fasta
-
-  # Prepare the input list for GNU Parallel
-  for fasta in `ls *.fasta` 
-  do
-    echo $BASEDIR/$fasta >> input.lst
-  done
-
 fi
-
-# The rerun mode.
 
 if [ "$mode" == "rerun" ]
 then
@@ -157,45 +141,191 @@ then
     quit_on_error "We are in the rerun mode, but the workspace does not exist."
   fi
 
-  cd workspace
-  BASEDIR=$(pwd)
+fi
 
-  # Check if the input list exists.
-  if [ -f "input.lst" ]
+
+# Set up the monomer model.
+if [ "$model" == "monomer" ]
+then
+
+  # Check if the foldsingle.sh script exists.
+  if [[ ! -f "foldsingle.sh" ]]
   then
-    mv input.lst input.lst.bkp
+    quit_on_error "The foldsingle.sh is not found. Quitting."
   fi
 
-  # Create the new input list from the sequences that are not processed.
-  for ffile in `ls *.fasta`
-  do
-    dname="${ffile%.*}"
-#    echo $dname
-    if [ ! -d $dname ]
+  # The run mode.
+  if [ "$mode" == "run" ]
+  then
+
+    # Merge all fasta files into one.
+    for file in `ls *.fasta`
+    do
+      cat $file >> workspace/merged.fasta
+    done
+
+    nseq=$(grep '>' workspace/merged.fasta | wc -l)
+    if [ $nseq -gt 9999 ]
     then
-      echo $BASEDIR/$dname.fasta >> input.lst
+      quit_on_error "Found more than 9,999 sequences. Please consider break them up into multiple jobs."
     fi
-  done
 
+    # Copy the foldsingle script to the workspace.
+    cd workspace
+    BASEDIR=$(pwd)
+    cp ../foldsingle.sh .
+
+    # Split the fasta files - up to 10,000 sequences.
+    awk '/^>/ {if(x>0) close(outname); x++; outname=sprintf("target_%.4d.fasta",x); print > outname;next;} {if(x>0) print >> outname;}' merged.fasta
+    rm merged.fasta
+
+    # Prepare the input list for GNU Parallel
+    for fasta in `ls *.fasta`
+    do
+      echo $BASEDIR/$fasta >> input.lst
+    done
+  
+  # The run mode ends here.
+  fi
+
+  # The rerun mode.
+  if [ "$mode" == "rerun" ]
+  then
+
+    cd workspace
+    BASEDIR=$(pwd)
+
+    # Check if the input list exists.
+    if [ -f "input.lst" ]
+    then
+      mv input.lst input.lst.bkp
+    fi
+
+    # Create the new input list from the sequences that are not processed.
+    for ffile in `ls *.fasta`
+    do
+      dname="${ffile%.*}"
+      if [ ! -d $dname ]
+      then
+        echo $BASEDIR/$dname.fasta >> input.lst
+      fi
+    done
+
+  # The rerun mode ends here.
+  fi
+
+  nseq=$(cat input.lst | wc -l)
+
+  # Try to figure out whether we are using Slurm or Torque.
+  if [ -z "$SLURM_JOB_NODELIST" ]
+  then
+    hostfile=$PBS_NODEFILE
+  else
+    scontrol show hostnames $SLURM_JOB_NODELIST > slurm.hosts
+    hostfile="$BASEDIR/slurm.hosts"
+  fi
+  nnode=$(cat $hostfile | uniq | wc -l)
+
+  echo
+  echo "Start processing $nseq sequences on $nnode nodes."
+  echo 
+
+  if [ "$dryrun" == "1" ] 
+  then
+    echo Dry run done.
+    exit 0
+  fi
+
+  # Process all sequences with AlphaFold
+  parallel -j 2 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: 0 1
+
+# End of the monomer model.
 fi
 
-# Try to figure out whether we are using Slurm or Torque.
-if [ -z "$SLURM_JOB_NODELIST" ]
+if [ "$model" == "multimer" ]
 then
-  hostfile=$PBS_NODEFILE
-else
-  scontrol show hostnames $SLURM_JOB_NODELIST > slurm.hosts
-  hostfile="$BASEDIR/slurm.hosts"
+
+  # Check if the foldsingle.sh script exists.
+  if [[ ! -f "foldmultiple.sh" ]]
+  then
+    quit_on_error "The foldmultiple.sh is not found. Quitting."
+  fi
+
+  # The run mode.
+  if [ "$mode" == "run" ]
+  then
+
+    # Copy all fasta files into the work directory.
+    nfile=`ls *.fasta | wc -l`
+    cp *.fasta workspace
+
+    cd workspace
+    BASEDIR=$(pwd)
+    cp ../foldmultiple.sh .
+
+    # Prepare the input list for GNU Parallel
+    for fasta in `ls *.fasta`
+    do
+      echo $BASEDIR/$fasta >> input.lst
+    done
+
+  # The run mode ends here.
+  fi
+
+  # The rerun mode.
+  if [ "$mode" == "rerun" ]
+  then
+
+    cd workspace
+    BASEDIR=$(pwd)
+
+    # Check if the input list exists.
+    if [ -f "input.lst" ]
+    then
+      mv input.lst input.lst.bkp
+    fi
+
+    # Create the new input list from the sequences that are not processed.
+    for ffile in `ls *.fasta`
+    do
+      dname="${ffile%.*}"
+      if [ ! -d $dname ]
+      then
+        echo $BASEDIR/$dname.fasta >> input.lst
+      fi
+    done
+
+  # Teh rerun mode ends here.
+  fi
+
+  # Try to figure out whether we are using Slurm or Torque.
+  if [ -z "$SLURM_JOB_NODELIST" ]
+  then
+    hostfile=$PBS_NODEFILE
+  else
+    scontrol show hostnames $SLURM_JOB_NODELIST > slurm.hosts
+    hostfile="$BASEDIR/slurm.hosts"
+  fi
+  nnode=$(cat $hostfile | uniq | wc -l)
+
+  echo
+  echo "Start processing $nfile fasta files on $nnode nodes."
+  echo 
+
+  if [ "$dryrun" == "1" ]
+  then
+    echo Dry run done.
+    exit 0
+  fi
+
+  # Process all sequences with AlphaFold
+  parallel -j 1 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldmultiple.sh {} $BASEDIR; sleep 120" :::: input.lst 
+
+# End of the multimer model.
 fi
 
-nseq=$(cat input.lst | wc -l)
-nnode=$(cat $hostfile | uniq | wc -l)
-
-echo
-echo "Start processing $nseq sequences on $nnode nodes."
-echo 
 
 # Process all sequences with AlphaFold
-parallel -j 2 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: 0 1
+#parallel -j 2 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: 0 1
 #parallel -j 1 --delay 30 --slf $PBS_NODEFILE --workdir $BASEDIR $BASEDIR/foldsingle.sh {} $BASEDIR :::: input.lst
 #parallel -j 2 --slf $PBS_NODEFILE --workdir $BASEDIR --link echo "./foldsingle.sh" {} $BASEDIR :::: input.lst ::: 0 1
