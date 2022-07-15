@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Version: 0.3
+# Version: 0.31
 # Author: Le Yan
 
 # To-do
@@ -13,13 +13,12 @@ usage() {
 
   Description:
     This scripts process protein sequences (in fasta format) using the AlphaFold package 
-    developed by DeepMind. It will read the sequences from all fasta files located in 
-    the same directory, store each sequence in a separate fasta file, then process them
-    with Alphafold (from within a Singularity container).
+    developed by DeepMind. For monomer models, it will read the sequences from all fasta 
+    files located in the same directory, store each sequence in a separate fasta file, 
+    then process them with Alphafold (from within a Singularity container). For multimer 
+    models, each fasta file will be processed separately.
     
-    Note: only the monomer model is supported at the moment.
-
-  Requirement:
+  Requirements:
     Access to the reference datasets.
     GNU parallel must be in the PATH.
 
@@ -27,14 +26,19 @@ usage() {
     $0 --model [monomer|multimer] --mode [[run|rerun] <options>
     where the mandatory flags are:
       --model
-        Users need to choose either the monomer or multimer model
+        Users need to choose either the monomer or multimer model.
       -- mode
         the "run" mode is to process the sequences contained in all FASTA files in the current directory, and
         the "rerun" mode is to process any sequences that are not processed in the workspace.
 
   Options:
-    -v: run in the verbose mode (for debugging)
-    -h: print help message
+    --inputdir: the directory where the input fasta files are located. If not provided, the current directory will be use.
+    --dryrun: quit after sanity checks and run setup.
+    -v: run in the verbose mode (for debugging).
+    -h: print help message.
+
+  Examples:
+    $0 --model monomer --mode run --inputdir /path/to/the/fasta/files
 
 HERE
 }
@@ -64,6 +68,7 @@ fi
 dryrun=0
 unset model
 unset mode
+unset inputdir
 
 # Process command line arguments.
 
@@ -74,6 +79,9 @@ case "$1" in
         shift 2;;
   --mode)
         mode=$2;
+        shift 2;;
+  --inputdir)
+        inputdir=$2;
         shift 2;;
   --dryrun)
         dryrun=1;
@@ -95,6 +103,9 @@ case "$1" in
 esac
 done
 
+# Get the directory where the scripts are loated.
+execdir=$(readlink -f $(dirname $0))
+
 # Perform the sanity checks.
 
 if [ "$mode" != 'run' ] && [ "$mode" != 'rerun' ]
@@ -107,17 +118,25 @@ then
   quit_on_error "The model must be specified as either 'monomer' or 'multimer'."
 fi
 
-# Check if the foldsingle.sh script exists.
-if [[ ! -f "foldsingle.sh" ]]
-then
-  quit_on_error "The foldsingle.sh is not found. Quitting." 
-fi
-
 # Check if GNU parallel is in PATH.
 if ! [[ -x "$(command -v parallel)" ]]
 then
   quit_on_error "GNU parallel could not be found!"
 fi
+
+# Check if the input directory exists.
+
+if [[ -z "$inputdir" ]]
+then
+  inputdir=$(pwd)
+fi
+
+if [[ ! -d $inputdir ]] 
+then
+  quit_on_error "Please check the input directory $inputdir."
+fi
+
+cd $inputdir
 
 if [ "$mode" == "run" ]
 then
@@ -149,9 +168,9 @@ if [ "$model" == "monomer" ]
 then
 
   # Check if the foldsingle.sh script exists.
-  if [[ ! -f "foldsingle.sh" ]]
+  if [[ ! -f "$execdir/foldsingle.sh" ]]
   then
-    quit_on_error "The foldsingle.sh is not found. Quitting."
+    quit_on_error "The foldsingle.sh is not found under $execdir. Quitting."
   fi
 
   # The run mode.
@@ -173,7 +192,7 @@ then
     # Copy the foldsingle script to the workspace.
     cd workspace
     BASEDIR=$(pwd)
-    cp ../foldsingle.sh .
+    cp $execdir/foldsingle.sh .
 
     # Split the fasta files - up to 10,000 sequences.
     awk '/^>/ {if(x>0) close(outname); x++; outname=sprintf("target_%.4d.fasta",x); print > outname;next;} {if(x>0) print >> outname;}' merged.fasta
@@ -214,6 +233,12 @@ then
   # The rerun mode ends here.
   fi
 
+  if [ "$dryrun" == "1" ] 
+  then
+    echo Dry run done.
+    exit 0
+  fi
+
   nseq=$(cat input.lst | wc -l)
 
   # Try to figure out whether we are using Slurm or Torque.
@@ -230,12 +255,6 @@ then
   echo "Start processing $nseq sequences on $nnode nodes."
   echo 
 
-  if [ "$dryrun" == "1" ] 
-  then
-    echo Dry run done.
-    exit 0
-  fi
-
   # Process all sequences with AlphaFold
   parallel -j 2 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: 0 1
 
@@ -245,10 +264,10 @@ fi
 if [ "$model" == "multimer" ]
 then
 
-  # Check if the foldsingle.sh script exists.
-  if [[ ! -f "foldmultiple.sh" ]]
+  # Check if the foldmultiple.sh script exists.
+  if [[ ! -f "$execdir/foldmultiple.sh" ]]
   then
-    quit_on_error "The foldmultiple.sh is not found. Quitting."
+    quit_on_error "The foldmultiple.sh is not found under $execdir. Quitting."
   fi
 
   # The run mode.
@@ -261,7 +280,7 @@ then
 
     cd workspace
     BASEDIR=$(pwd)
-    cp ../foldmultiple.sh .
+    cp $execdir/foldmultiple.sh .
 
     # Prepare the input list for GNU Parallel
     for fasta in `ls *.fasta`
@@ -298,6 +317,12 @@ then
   # Teh rerun mode ends here.
   fi
 
+  if [ "$dryrun" == "1" ]
+  then
+    echo Dry run done.
+    exit 0
+  fi
+
   # Try to figure out whether we are using Slurm or Torque.
   if [ -z "$SLURM_JOB_NODELIST" ]
   then
@@ -311,12 +336,6 @@ then
   echo
   echo "Start processing $nfile fasta files on $nnode nodes."
   echo 
-
-  if [ "$dryrun" == "1" ]
-  then
-    echo Dry run done.
-    exit 0
-  fi
 
   # Process all sequences with AlphaFold
   parallel -j 1 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldmultiple.sh {} $BASEDIR; sleep 120" :::: input.lst 
