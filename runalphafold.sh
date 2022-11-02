@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Version: 0.31
+# Version: 0.32
 # Author: Le Yan
 
 # To-do
@@ -181,6 +181,7 @@ then
     for file in `ls *.fasta`
     do
       cat $file >> workspace/merged.fasta
+      dos2unix workspace/merged.fasta
     done
 
     nseq=$(grep '>' workspace/merged.fasta | wc -l)
@@ -276,6 +277,7 @@ then
 
     # Copy all fasta files into the work directory.
     nfile=`ls *.fasta | wc -l`
+    dos2unix *.fasta
     cp *.fasta workspace
 
     cd workspace
