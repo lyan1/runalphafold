@@ -1,12 +1,16 @@
 #!/bin/bash
 
-# Version: 0.32
+# Version: 0.33
 # Author: Le Yan
 
 # To-do
 # 1. Adjust the number of GNU parallel jobs according to the number of devices per node.
 # 2. Add more command line options
 # 3. More sanity checks (e.g. availability of GPUs, reference data etc.)
+
+#v0.33
+
+# Fixed the bug where fasta files prepared on Windows may have extra characters that may cause the job to fail.
 
 usage() {
   cat << HERE
@@ -180,9 +184,11 @@ then
     # Merge all fasta files into one.
     for file in `ls *.fasta`
     do
-      cat $file >> workspace/merged.fasta
-      dos2unix workspace/merged.fasta
+      cat $file >> workspace/merged_usr.fasta
     done
+    sed -i -e 's/\r/\n/g' workspace/merged_usr.fasta
+    tr -cd '\11\12\15\40-\176' < workspace/merged_usr.fasta > workspace/merged.fasta
+    rm workspace/merged_usr.fasta
 
     nseq=$(grep '>' workspace/merged.fasta | wc -l)
     if [ $nseq -gt 9999 ]
@@ -277,8 +283,11 @@ then
 
     # Copy all fasta files into the work directory.
     nfile=`ls *.fasta | wc -l`
-    dos2unix *.fasta
-    cp *.fasta workspace
+    for file in `ls *.fasta`
+    do
+      sed -i -e 's/\r/\n/g' $file
+      tr -cd '\11\12\15\40-\176' < $file > workspace/$file
+    done
 
     cd workspace
     BASEDIR=$(pwd)
