@@ -1,16 +1,22 @@
 #!/bin/bash
 
-# Version: 0.33
+# Version: 0.34
 # Author: Le Yan
 
 # To-do
-# 1. Adjust the number of GNU parallel jobs according to the number of devices per node.
-# 2. Add more command line options
-# 3. More sanity checks (e.g. availability of GPUs, reference data etc.)
+# 1. Allow mixed node types (2 and 4 devices per node).
+# 2. Allow multiple node runs for the OOD portal app.
+# 3. Handle the failed sequences automatically (remove the rerun mode).
+# 4. Add more command line options.
+# 5. More sanity checks (e.g. availability of GPUs, reference data etc.)
 
-#v0.33
+#version 0.33
 
-# Fixed the bug where fasta files prepared on Windows may have extra characters that may cause the job to fail.
+#Fixed the bug where fasta files prepared on Windows may have extra characters that may cause the job to fail.
+
+#version 0.34
+
+#Adjust the number of GNU parallel jobs according to the number of devices per node.
 
 usage() {
   cat << HERE
@@ -59,8 +65,6 @@ function debug_message {
   echo $1
   echo
 }
-
-unset mode
 
 if [[ "$#" -eq 0 ]]
 then
@@ -171,6 +175,11 @@ fi
 if [ "$model" == "monomer" ]
 then
 
+  # Find the number of CUDA devices on each node
+  ncudadevices=$(nvidia-smi -L | wc -l)
+  topdevice=$(( $ncudadevices - 1 ))
+  devlist=$(seq 0 $topdevice)
+
   # Check if the foldsingle.sh script exists.
   if [[ ! -f "$execdir/foldsingle.sh" ]]
   then
@@ -260,10 +269,11 @@ then
 
   echo
   echo "Start processing $nseq sequences on $nnode nodes."
+  echo "Each node has $ncudadevices GPUs."
   echo 
 
   # Process all sequences with AlphaFold
-  parallel -j 2 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: 0 1
+  parallel -j $ncudadevices --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: $devlist 
 
 # End of the monomer model.
 fi
