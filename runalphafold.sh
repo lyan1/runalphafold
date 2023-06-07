@@ -1,22 +1,26 @@
 #!/bin/bash
 
-# Version: 0.34
+# Version: 0.40
 # Author: Le Yan
 
 # To-do
 # 1. Allow mixed node types (2 and 4 devices per node).
 # 2. Allow multiple node runs for the OOD portal app.
-# 3. Handle the failed sequences automatically (remove the rerun mode).
-# 4. Add more command line options.
-# 5. More sanity checks (e.g. availability of GPUs, reference data etc.)
+# 3. More sanity checks (e.g. availability of GPUs, reference data etc.)
 
-#version 0.33
+# Version history
 
-#Fixed the bug where fasta files prepared on Windows may have extra characters that may cause the job to fail.
+# 0.33
 
-#version 0.34
+# Fixed the bug where fasta files prepared on Windows may have extra characters that may cause the job to fail.
 
-#Adjust the number of GNU parallel jobs according to the number of devices per node.
+# 0.34
+
+# Adjust the number of GNU parallel jobs according to the number of devices per node.
+
+# 0.40
+
+# Rerun the failed sequences automatically until all sequences are processed. 
 
 usage() {
   cat << HERE
@@ -33,13 +37,10 @@ usage() {
     GNU parallel must be in the PATH.
 
   Usage:
-    $0 --model [monomer|multimer] --mode [[run|rerun] <options>
+    $0 --model [monomer|multimer] <options>
     where the mandatory flags are:
       --model
         Users need to choose either the monomer or multimer model.
-      -- mode
-        the "run" mode is to process the sequences contained in all FASTA files in the current directory, and
-        the "rerun" mode is to process any sequences that are not processed in the workspace.
 
   Options:
     --inputdir: the directory where the input fasta files are located. If not provided, the current directory will be use.
@@ -48,7 +49,7 @@ usage() {
     -h: print help message.
 
   Examples:
-    $0 --model monomer --mode run --inputdir /path/to/the/fasta/files
+    $0 --model monomer --inputdir /path/to/the/fasta/files
 
 HERE
 }
@@ -75,7 +76,6 @@ fi
 # Set initial valules.
 dryrun=0
 unset model
-unset mode
 unset inputdir
 
 # Process command line arguments.
@@ -84,9 +84,6 @@ while [ "$#" -gt 0 ] ; do
 case "$1" in
   --model)
         model=$2;
-        shift 2;;
-  --mode)
-        mode=$2;
         shift 2;;
   --inputdir)
         inputdir=$2;
@@ -116,11 +113,6 @@ execdir=$(readlink -f $(dirname $0))
 
 # Perform the sanity checks.
 
-if [ "$mode" != 'run' ] && [ "$mode" != 'rerun' ]
-then
-  quit_on_error "The mode must be specified as either 'run' or 'rerun'."
-fi
-
 if [ "$model" != 'monomer' ] && [ "$model" != 'multimer' ]
 then
   quit_on_error "The model must be specified as either 'monomer' or 'multimer'."
@@ -146,30 +138,13 @@ fi
 
 cd $inputdir
 
-if [ "$mode" == "run" ]
+# Make sure the workspace is not already there.
+if [ -d "workspace" ]
 then
-
-  # Make sure the workspace is not already there.
-  if [ -d "workspace" ]
-  then
-    quit_on_error "We are in the run mode, but the workspace already exists. Rerun maybe?"
-  fi
-
-  mkdir workspace
-
+  quit_on_error "The 'workspace' directory already exists. Please either delete it or run from a different directory."
 fi
 
-if [ "$mode" == "rerun" ]
-then
-
-  # Check if the workspace directory is there.
-  if [ ! -d "workspace" ]
-  then
-    quit_on_error "We are in the rerun mode, but the workspace does not exist."
-  fi
-
-fi
-
+mkdir workspace
 
 # Set up the monomer model.
 if [ "$model" == "monomer" ]
@@ -186,10 +161,6 @@ then
     quit_on_error "The foldsingle.sh is not found under $execdir. Quitting."
   fi
 
-  # The run mode.
-  if [ "$mode" == "run" ]
-  then
-
     # Merge all fasta files into one.
     for file in `ls *.fasta`
     do
@@ -202,7 +173,7 @@ then
     nseq=$(grep '>' workspace/merged.fasta | wc -l)
     if [ $nseq -gt 9999 ]
     then
-      quit_on_error "Found more than 9,999 sequences. Please consider break them up into multiple jobs."
+      quit_on_error "Found more than 9,999 sequences. Please consider breaking them up into multiple jobs."
     fi
 
     # Copy the foldsingle script to the workspace.
@@ -220,34 +191,6 @@ then
       echo $BASEDIR/$fasta >> input.lst
     done
   
-  # The run mode ends here.
-  fi
-
-  # The rerun mode.
-  if [ "$mode" == "rerun" ]
-  then
-
-    cd workspace
-    BASEDIR=$(pwd)
-
-    # Check if the input list exists.
-    if [ -f "input.lst" ]
-    then
-      mv input.lst input.lst.bkp
-    fi
-
-    # Create the new input list from the sequences that are not processed.
-    for ffile in `ls *.fasta`
-    do
-      dname="${ffile%.*}"
-      if [ ! -d $dname ]
-      then
-        echo $BASEDIR/$dname.fasta >> input.lst
-      fi
-    done
-
-  # The rerun mode ends here.
-  fi
 
   if [ "$dryrun" == "1" ] 
   then
@@ -272,8 +215,40 @@ then
   echo "Each node has $ncudadevices GPUs."
   echo 
 
-  # Process all sequences with AlphaFold
-  parallel -j $ncudadevices --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: $devlist 
+  allprocessed=0
+
+  while [ "$allprocessed" != "1" ]
+  do
+
+    # Process all sequences with AlphaFold
+    parallel -j $ncudadevices --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldsingle.sh {} $BASEDIR; sleep 120" :::: input.lst ::: $devlist 
+
+    # Check if there is any failed sequence.
+    > input.lst
+    for d in `find . -type d -name "target*"`
+    do
+      if [ ! -f "$d/timings.json" ]
+      then
+        rm -rf $d
+        echo "$BASEDIR/$(basename $d).fasta" >> input.lst
+        echo "$BASEDIR/$(basename $d).fasta"
+      fi
+#      nf=$(find $d -type f | wc -l)
+#      if [ ! "$nf" == "27" ]
+#      then
+#        echo $d
+#        rm -rf $d
+#      fi
+    done
+
+    echo Message: $(cat input.lst | wc -l) sequences remain to be processed.
+
+    if [ ! -s input.lst ]
+    then
+      allprocessed=1
+    fi
+
+  done
 
 # End of the monomer model.
 fi
@@ -286,10 +261,6 @@ then
   then
     quit_on_error "The foldmultiple.sh is not found under $execdir. Quitting."
   fi
-
-  # The run mode.
-  if [ "$mode" == "run" ]
-  then
 
     # Copy all fasta files into the work directory.
     nfile=`ls *.fasta | wc -l`
@@ -308,35 +279,6 @@ then
     do
       echo $BASEDIR/$fasta >> input.lst
     done
-
-  # The run mode ends here.
-  fi
-
-  # The rerun mode.
-  if [ "$mode" == "rerun" ]
-  then
-
-    cd workspace
-    BASEDIR=$(pwd)
-
-    # Check if the input list exists.
-    if [ -f "input.lst" ]
-    then
-      mv input.lst input.lst.bkp
-    fi
-
-    # Create the new input list from the sequences that are not processed.
-    for ffile in `ls *.fasta`
-    do
-      dname="${ffile%.*}"
-      if [ ! -d $dname ]
-      then
-        echo $BASEDIR/$dname.fasta >> input.lst
-      fi
-    done
-
-  # Teh rerun mode ends here.
-  fi
 
   if [ "$dryrun" == "1" ]
   then
@@ -358,8 +300,34 @@ then
   echo "Start processing $nfile fasta files on $nnode nodes."
   echo 
 
-  # Process all sequences with AlphaFold
-  parallel -j 1 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldmultiple.sh {} $BASEDIR; sleep 120" :::: input.lst 
+  allprocessed=0
+
+  while [ "$allprocessed" != "1" ]
+  do
+
+    # Process all sequences with AlphaFold
+    parallel -j 1 --delay 30 --slf $hostfile --workdir $BASEDIR --link "$BASEDIR/foldmultiple.sh {} $BASEDIR; sleep 120" :::: input.lst 
+
+    # Check if there is any failed sequence.
+    > input.lst
+    for d in `find . -type d -name "target*"`
+    do
+      if [ ! -f "$d/timings.json" ]
+      then
+        rm -rf $d
+        echo "$BASEDIR/$(basename $d).fasta" >> input.lst
+        echo "$BASEDIR/$(basename $d).fasta"
+      fi
+    done 
+
+    echo Message: $(cat input.lst | wc -l) remain to be processed.
+
+    if [ ! -s input.lst ]
+    then
+      allprocessed=1
+    fi
+
+  done
 
 # End of the multimer model.
 fi
