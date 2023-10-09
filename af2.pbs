@@ -9,4 +9,4 @@
 
 cd $PBS_O_WORKDIR
 
-./runalphafold.sh --model monomer --mode run
+./runalphafold.sh --model monomer
